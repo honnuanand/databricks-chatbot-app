@@ -10,19 +10,18 @@ from src.components.sidebar import render_sidebar
 from src.components.chat_interface import render_chat_interface
 from src.services.chat_service import ChatService
 from src.services.agent_service import AgentService
-from src.styles.dark_theme import DARK_THEME
-from src.styles.light_theme import LIGHT_THEME
 
 # Load environment variables
 load_dotenv()
 
-# Initialize Streamlit page configuration
-st.set_page_config(
-    page_title="Databricks AI Chatbot",
-    page_icon="🤖",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+def configure_page():
+    """Configure Streamlit page settings."""
+    st.set_page_config(
+        page_title="Databricks AI Chatbot",
+        page_icon="🤖",
+        layout="wide",
+        initial_sidebar_state="expanded"
+    )
 
 def get_openai_api_key() -> str:
     """
@@ -36,8 +35,8 @@ def get_openai_api_key() -> str:
     try:
         from databricks.sdk.runtime import dbutils
         api_key = dbutils.secrets.get(scope="chatbot-secrets", key="OPENAI_API_KEY")
-    except ImportError:
-        # Not in Databricks environment
+    except (ImportError, Exception):
+        # Not in Databricks environment or secret not found
         pass
     
     # Fall back to environment variable
@@ -152,6 +151,13 @@ def handle_message(user_input: str):
 
 def main():
     """Main application function."""
+    # Import theme styles
+    from src.styles.dark_theme import DARK_THEME
+    from src.styles.light_theme import LIGHT_THEME
+    
+    # Configure page
+    configure_page()
+    
     # Initialize session state
     initialize_session_state()
     
