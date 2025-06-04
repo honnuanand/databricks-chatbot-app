@@ -4,6 +4,7 @@ import streamlit as st
 import os
 from datetime import datetime
 from dotenv import load_dotenv
+from typing import Optional
 
 from src.components.sidebar import render_sidebar
 from src.components.chat_interface import render_chat_interface
@@ -22,6 +23,34 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+def get_openai_api_key() -> str:
+    """
+    Get OpenAI API key from either Databricks secrets or environment variables.
+    Returns the API key as a string.
+    Raises ValueError if no API key is found.
+    """
+    api_key = None
+    
+    # Try Databricks secrets first
+    try:
+        from databricks.sdk.runtime import dbutils
+        api_key = dbutils.secrets.get(scope="chatbot-secrets", key="OPENAI_API_KEY")
+    except ImportError:
+        # Not in Databricks environment
+        pass
+    
+    # Fall back to environment variable
+    if not api_key:
+        api_key = os.getenv("OPENAI_API_KEY")
+    
+    if not api_key:
+        raise ValueError(
+            "OpenAI API key not found. Please set it either in Databricks secrets "
+            "or as an environment variable OPENAI_API_KEY"
+        )
+    
+    return api_key
 
 def initialize_session_state():
     """Initialize session state variables."""
@@ -44,7 +73,7 @@ def initialize_session_state():
             model_name=st.session_state.model,
             temperature=st.session_state.temperature,
             system_prompt=st.session_state.system_prompt,
-            openai_api_key=os.getenv("OPENAI_API_KEY")
+            openai_api_key=get_openai_api_key()
         )
     if "chat_service" not in st.session_state:
         st.session_state.chat_service = ChatService()

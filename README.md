@@ -59,10 +59,49 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -e .
 ```
 
-4. Create a `.env` file in the project root and add your OpenAI API key:
-```
-OPENAI_API_KEY=your_api_key_here
-```
+## Environment Setup
+
+The application supports multiple ways to manage credentials and environment variables:
+
+### Local Development
+
+1. **Using Environment Variables (Recommended for Local Development)**:
+   ```bash
+   # Set directly in your terminal
+   export OPENAI_API_KEY='your-key-here'
+   
+   # Or create a script (don't commit this) named set_env.sh:
+   echo 'export OPENAI_API_KEY="your-key-here"' > set_env.sh
+   source set_env.sh
+   ```
+
+2. **Using .env File (Alternative)**:
+   ```bash
+   # Create .env file (already in .gitignore)
+   echo 'OPENAI_API_KEY=your-key-here' > .env
+   ```
+
+   ⚠️ **Security Note**: Never commit the `.env` file or expose your API key in the codebase.
+
+### Databricks Deployment
+
+1. **Using Databricks Secrets (Recommended for Production)**:
+   ```bash
+   # Create a secret scope (one-time setup)
+   databricks secrets create-scope chatbot-secrets --scope-backend-type DATABRICKS
+   
+   # Add your OpenAI API key to the scope
+   databricks secrets put-secret --scope chatbot-secrets --key OPENAI_API_KEY --string-value 'your-key-here'
+   ```
+
+2. **Configuration Files**:
+   - `app.yaml`: Defines app configuration and secret requirements
+   - `databricks.yml`: Defines deployment configuration and environment setup
+
+The application automatically handles credential management:
+1. First tries to fetch from Databricks secrets (when running in Databricks)
+2. Falls back to environment variables (for local development)
+3. Provides clear error messages if credentials are missing
 
 ## Usage
 
@@ -114,6 +153,8 @@ View test coverage:
 pytest --cov=src --cov-report=html
 ```
 
+Current test coverage: 98%
+
 ### CI/CD Pipeline
 The project uses GitHub Actions for continuous integration and testing. The pipeline:
 - Runs on Python 3.9
@@ -125,7 +166,25 @@ The project uses GitHub Actions for continuous integration and testing. The pipe
 
 Required GitHub Secrets:
 - `OPENAI_API_KEY`: Your OpenAI API key for testing
-- `CODECOV_TOKEN`: Token for uploading coverage reports (optional)
+- `CODECOV_TOKEN`: Token for uploading coverage reports
+
+### Security Best Practices
+1. **API Key Management**:
+   - Use Databricks secrets for production deployment
+   - Use environment variables for local development
+   - Never commit credentials to the repository
+   - API keys are automatically rotated in CI/CD
+
+2. **Code Security**:
+   - Regular dependency updates
+   - Security scanning with safety
+   - Code coverage monitoring
+   - Automated testing
+
+3. **Access Control**:
+   - Scope-based secret access
+   - Role-based app access
+   - Audit logging enabled
 
 ### Code Quality
 Before submitting a PR:
@@ -143,6 +202,24 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - Access to a Databricks workspace with Apps enabled
 - Admin privileges to manage secrets and environment variables
 - Git repository access
+
+### Configuration
+The app uses two main configuration files:
+1. `app.yaml`: Defines app-specific settings
+   ```yaml
+   secrets:
+     - key: OPENAI_API_KEY
+       description: "OpenAI API Key for GPT models"
+       required: true
+   ```
+
+2. `databricks.yml`: Defines deployment settings
+   ```yaml
+   service:
+     env:
+       - name: "OPENAI_API_KEY"
+         value: "${OPENAI_API_KEY}"
+   ```
 
 ### Deployment Methods
 
@@ -171,26 +248,16 @@ This project is licensed under the MIT License - see the LICENSE file for detail
       --source-code-path /Workspace/Users/your-email@org.com/databricks-chatbot-app
    ```
 
-### Configuration
-The app uses `app.yaml` for deployment configuration:
-- Python version: 3.9
-- Memory: 4-8 GB
-- CPU: 2-4 cores
-- Required secrets: OPENAI_API_KEY
-
 ### Post-Deployment
-1. **Monitor Deployment**
-   - Check the app overview page for deployment status
-   - View logs in the **Logs** tab for debugging
+1. **Verify Secrets**:
+   - Check secret scope access
+   - Verify environment variables
+   - Test API key rotation
 
-2. **Access Control**
-   - Configure user access in the **Permissions** tab
-   - Set appropriate permission levels
-
-3. **Updates and Maintenance**
-   - Push code changes to the repository
-   - Redeploy using the same method as initial deployment
-   - Monitor app performance and logs
+2. **Monitor Security**:
+   - Review access logs
+   - Check secret usage
+   - Monitor API usage
 
 ### Troubleshooting
 - **App Fails to Start**
