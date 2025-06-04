@@ -8,6 +8,10 @@ on:
 
 permissions:
   contents: read
+  # Required for uploading artifacts and coverage
+  actions: write
+  checks: write
+  pull-requests: write
 
 jobs:
   test:
@@ -69,14 +73,16 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install build
+        pip install build wheel
         pip install -e .
     
     - name: Build package
       run: python -m build
     
     - name: Upload build artifacts
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: dist
-        path: dist/ 
+        path: dist/
+        if-no-files-found: error
+        retention-days: 5 
