@@ -1,0 +1,30 @@
+bundle:
+  name: databricks-chatbot
+
+include:
+  - "*.py"
+  - "requirements.txt"
+  - "saved_chats/*.json"
+
+service:
+  service_name: "databricks-chatbot"
+  package_name: "databricks_chatbot"
+  artifact_name: "databricks-chatbot"
+  env: 
+    - name: "OPENAI_API_KEY"
+      value: "${OPENAI_API_KEY}"
+  resources:
+    min_memory_gb: 4
+    max_memory_gb: 8
+    min_cores: 2
+  init_scripts:
+    - pip install -r requirements.txt
+
+files:
+  setup:
+    - source: "requirements.txt"
+      destination: "requirements.txt"
+    - source: "app.py"
+      destination: "app.py"
+    - source: "saved_chats"
+      destination: "saved_chats" 
