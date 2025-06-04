@@ -1,0 +1,34 @@
+name: databricks-chatbot
+description: AI-powered chatbot for Databricks assistance
+package:
+  name: databricks_chatbot
+  version: 0.1.0
+
+python_version: "3.9"
+
+requirements:
+  - requirements.txt
+
+resources:
+  min_memory: 4
+  max_memory: 8
+  min_cores: 2
+  max_cores: 4
+
+environment_variables:
+  PYTHONPATH: "${PYTHONPATH}:${DATABRICKS_ROOT}/src"
+
+secrets:
+  - key: OPENAI_API_KEY
+    description: "OpenAI API Key for GPT models"
+    required: true
+
+service:
+  title: "Databricks AI Chatbot"
+  description: "An intelligent chatbot for Databricks assistance"
+  min_instances: 1
+  max_instances: 2
+  port: 8501
+
+init_scripts:
+  - pip install -r requirements.txt 
