@@ -1,5 +1,10 @@
 # Databricks AI Chatbot
 
+[![CI Status](https://github.com/honnuanand/databricks-chatbot-app/actions/workflows/python-app.yml/badge.svg)](https://github.com/honnuanand/databricks-chatbot-app/actions/workflows/python-app.yml)
+[![codecov](https://codecov.io/gh/honnuanand/databricks-chatbot-app/branch/main/graph/badge.svg)](https://codecov.io/gh/honnuanand/databricks-chatbot-app)
+[![Python 3.9](https://img.shields.io/badge/python-3.9-blue.svg)](https://www.python.org/downloads/release/python-390/)
+[![Security: bandit](https://img.shields.io/badge/security-safety-green.svg)](https://github.com/pyupio/safety)
+
 A modern AI chatbot providing expert assistance for Databricks queries. Built with Streamlit and powered by LangChain + GPT models, it features real-time web search, contextual responses, and a sleek UI. Get instant help with Databricks technology, best practices, and implementations.
 
 ## Key Features
@@ -96,6 +101,38 @@ databricks-chatbot-app/
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
 
+## Development
+
+### Testing
+Run the test suite:
+```bash
+pytest
+```
+
+View test coverage:
+```bash
+pytest --cov=src --cov-report=html
+```
+
+### CI/CD Pipeline
+The project uses GitHub Actions for continuous integration and testing. The pipeline:
+- Runs on Python 3.9
+- Executes unit tests with pytest
+- Performs code quality checks with flake8
+- Scans dependencies for security vulnerabilities
+- Generates test coverage reports
+- Builds the package
+
+Required GitHub Secrets:
+- `OPENAI_API_KEY`: Your OpenAI API key for testing
+- `CODECOV_TOKEN`: Token for uploading coverage reports (optional)
+
+### Code Quality
+Before submitting a PR:
+1. Run tests: `pytest`
+2. Check code style: `flake8`
+3. Check dependencies: `safety check`
+
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
@@ -107,78 +144,79 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - Admin privileges to manage secrets and environment variables
 - Git repository access
 
-### Deployment Steps
+### Deployment Methods
 
-1. **Access Apps Section**
-   - Navigate to your Databricks workspace
-   - Click on "Apps" in the left sidebar
-   - Select "Create App"
+#### Method 1: Using Databricks UI
+1. **Upload App Files**
+   - Go to your Databricks workspace
+   - Click **Workspace** in the sidebar
+   - Upload your app files to a designated folder
 
-2. **Configure App Source**
-   - Choose "Import from Git"
-   - Enter repository URL: `https://github.com/honnuanand/databricks-chatbot-app.git`
-   - Select the branch (e.g., `main`)
+2. **Deploy the App**
+   - Click **Compute** in the sidebar
+   - Go to the **Apps** tab
+   - Click your app name in the **Name** column
+   - Click **Deploy** and select your app folder
+   - Review configuration and click **Deploy**
 
-3. **Configure Environment**
-   - In the App configuration, set the following:
-     ```
-     PYTHON_VERSION=3.9
-     ```
-
-4. **Set Required Secrets**
-   - Go to "App Settings" > "Secrets"
-   - Add the following secret:
-     ```
-     OPENAI_API_KEY=your_api_key_here
-     ```
-
-5. **Configure Resources**
-   - Recommended minimum settings:
-     - Memory: 4 GB
-     - CPU: 2 cores
-
-6. **Access Control**
-   - Under "Permissions":
-     - Add users/groups who should have access
-     - Set appropriate permission levels (Can Use, Can Manage, etc.)
-
-7. **Deploy**
-   - Click "Create" to deploy the app
-   - Wait for the deployment to complete
-   - Access your app using the provided URL
-
-### Updating the App
-
-1. **Push Changes**
-   - Make changes to your local repository
-   - Commit and push to GitHub
+#### Method 2: Using Databricks CLI (Recommended)
+1. **Sync Files to Workspace**
    ```bash
-   git add .
-   git commit -m "Your update message"
-   git push origin main
+   databricks sync --watch . /Workspace/Users/your-email@org.com/databricks-chatbot-app
    ```
 
-2. **Redeploy**
-   - In Databricks Apps, find your app
-   - Click "Update"
-   - Select "Redeploy" to pull latest changes
+2. **Deploy the App**
+   ```bash
+   databricks apps deploy databricks-chatbot \
+      --source-code-path /Workspace/Users/your-email@org.com/databricks-chatbot-app
+   ```
+
+### Configuration
+The app uses `app.yaml` for deployment configuration:
+- Python version: 3.9
+- Memory: 4-8 GB
+- CPU: 2-4 cores
+- Required secrets: OPENAI_API_KEY
+
+### Post-Deployment
+1. **Monitor Deployment**
+   - Check the app overview page for deployment status
+   - View logs in the **Logs** tab for debugging
+
+2. **Access Control**
+   - Configure user access in the **Permissions** tab
+   - Set appropriate permission levels
+
+3. **Updates and Maintenance**
+   - Push code changes to the repository
+   - Redeploy using the same method as initial deployment
+   - Monitor app performance and logs
 
 ### Troubleshooting
-
 - **App Fails to Start**
   - Check logs in the App's "Logs" section
   - Verify all required secrets are set
-  - Ensure Python version is correct
+  - Ensure Python version matches app.yaml
 
 - **Performance Issues**
-  - Consider increasing memory/CPU allocation
-  - Check app logs for memory usage
-  - Monitor response times in logs
+  - Check resource utilization in logs
+  - Consider adjusting memory/CPU allocation
+  - Monitor response times
+
+- **SSL Warnings**
+  - If you see urllib3 SSL warnings, ensure your environment uses OpenSSL 1.1.1+
+  - Consider upgrading urllib3 or your SSL implementation
 
 ### Best Practices
-
 - Regularly update dependencies
 - Monitor app usage and logs
 - Back up chat history periodically
 - Test updates locally before deploying
 - Use version tags for stable releases 
+
+## Additional Development Dependencies
+
+To install additional development dependencies, use the following command:
+```bash
+pip install pytest pytest-cov flake8 safety build
+``` 
