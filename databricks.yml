@@ -27,4 +27,28 @@ files:
     - source: "app.py"
       destination: "app.py"
     - source: "saved_chats"
-      destination: "saved_chats" 
+      destination: "saved_chats"
+
+app:
+  build:
+    python_version: "3.9"
+    requirements: "requirements.txt"
+
+  resources:
+    memory: 4
+    cpu: 2
+
+  environment_variables:
+    PYTHONPATH: "${PYTHONPATH}:${DATABRICKS_ROOT}/src"
+
+  secrets:
+    - key: "OPENAI_API_KEY"
+      description: "OpenAI API Key for GPT models"
+      required: true
+
+  service:
+    title: "Databricks AI Chatbot"
+    description: "An intelligent chatbot for Databricks assistance"
+    min_instances: 1
+    max_instances: 1
+    port: 8501 
