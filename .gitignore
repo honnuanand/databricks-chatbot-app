@@ -45,4 +45,8 @@ chat_history/
 .dbx/
 
 # Local chat history
-saved_chats/ 
+saved_chats/
+
+# Coverage
+.coverage
+htmlcov/ 
