@@ -1,7 +1,6 @@
 # Databricks AI Chatbot
 
 [![CI Status](https://github.com/honnuanand/databricks-chatbot-app/actions/workflows/python-app.yml/badge.svg)](https://github.com/honnuanand/databricks-chatbot-app/actions/workflows/python-app.yml)
-[![codecov](https://codecov.io/gh/honnuanand/databricks-chatbot-app/branch/main/graph/badge.svg)](https://codecov.io/gh/honnuanand/databricks-chatbot-app)
 [![Python 3.9](https://img.shields.io/badge/python-3.9-blue.svg)](https://www.python.org/downloads/release/python-390/)
 [![Security: bandit](https://img.shields.io/badge/security-safety-green.svg)](https://github.com/pyupio/safety)
 
@@ -166,7 +165,6 @@ The project uses GitHub Actions for continuous integration and testing. The pipe
 
 Required GitHub Secrets:
 - `OPENAI_API_KEY`: Your OpenAI API key for testing
-- `CODECOV_TOKEN`: Token for uploading coverage reports
 
 ### Security Best Practices
 1. **API Key Management**:
