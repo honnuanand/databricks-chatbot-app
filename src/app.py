@@ -87,10 +87,17 @@ def handle_load_chat(chat_id: str):
     st.rerun()
 
 def handle_delete_chat(chat_id: str):
-    """Handle deleting a saved chat."""
+    """Handle chat deletion."""
+    # Delete chat
     st.session_state.chat_service.delete_chat(chat_id)
-    if st.session_state.chat_id == chat_id:
-        handle_new_chat()
+    
+    # If deleting current chat, reset state
+    if chat_id == st.session_state.chat_id:
+        st.session_state.messages = []
+        st.session_state.chat_name = None
+        st.session_state.chat_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+    # Rerun app
     st.rerun()
 
 def handle_message(user_input: str):

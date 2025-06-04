@@ -1,80 +1,54 @@
-"""Chat management service for handling chat operations."""
+"""Service for managing chat history and persistence."""
 
 import json
-from datetime import datetime
+import os
 from pathlib import Path
-from typing import List, Tuple, Dict, Optional
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+from typing import List, Dict, Tuple
+from langchain_core.messages import SystemMessage, HumanMessage
 
 class ChatService:
-    def __init__(self, chat_dir: str = "./chat_history"):
-        """Initialize chat service with directory for storing chat history."""
-        self.chat_dir = Path(chat_dir)
-        self.chat_dir.mkdir(exist_ok=True)
+    def __init__(self):
+        """Initialize the chat service."""
+        self.saved_chats_dir = "saved_chats"
+        os.makedirs(self.saved_chats_dir, exist_ok=True)
     
-    def save_chat(self, chat_id: str, chat_name: str, messages: List[dict]) -> None:
-        """Save chat history to a JSON file."""
-        chat_file = self.chat_dir / f"{chat_id}.json"
-        
-        # Convert messages to the correct format
-        formatted_messages = []
-        for m in messages:
-            if isinstance(m, dict):
-                formatted_messages.append({
-                    "role": m["role"],
-                    "content": m["content"]
-                })
-            else:
-                formatted_messages.append({
-                    "role": m.type,
-                    "content": m.content
-                })
-        
+    def save_chat(self, chat_id: str, chat_name: str, messages: List[Dict]) -> None:
+        """Save chat history to a file."""
         chat_data = {
-            "id": chat_id,
-            "name": chat_name,
-            "messages": formatted_messages,
-            "timestamp": datetime.now().isoformat()
+            "chat_id": chat_id,
+            "chat_name": chat_name,
+            "messages": messages
         }
         
-        with open(chat_file, "w") as f:
-            json.dump(chat_data, f)
+        file_path = os.path.join(self.saved_chats_dir, f"{chat_id}.json")
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(chat_data, f, indent=2)
     
-    def load_chat(self, chat_id: str) -> Tuple[Optional[str], List]:
-        """Load chat history from a JSON file."""
-        chat_file = self.chat_dir / f"{chat_id}.json"
-        if chat_file.exists():
-            with open(chat_file, "r") as f:
-                chat_data = json.load(f)
-                messages = []
-                for m in chat_data["messages"]:
-                    if m["role"] == "system":
-                        messages.append(SystemMessage(content=m["content"]))
-                    elif m["role"] == "human":
-                        messages.append(HumanMessage(content=m["content"]))
-                    elif m["role"] == "ai":
-                        messages.append(AIMessage(content=m["content"]))
-                return chat_data["name"], messages
-        return None, []
+    def load_chat(self, chat_id: str) -> Tuple[str, List[Dict]]:
+        """Load chat history from a file."""
+        file_path = os.path.join(self.saved_chats_dir, f"{chat_id}.json")
+        with open(file_path, "r", encoding="utf-8") as f:
+            chat_data = json.load(f)
+            return chat_data["chat_name"], chat_data["messages"]
     
     def get_saved_chats(self) -> List[Dict]:
         """Get list of saved chats."""
         chats = []
-        for chat_file in self.chat_dir.glob("*.json"):
-            with open(chat_file, "r") as f:
-                chat_data = json.load(f)
-                chats.append({
-                    "id": chat_data["id"],
-                    "name": chat_data["name"],
-                    "timestamp": chat_data["timestamp"]
-                })
-        return sorted(chats, key=lambda x: x["timestamp"], reverse=True)
+        for chat_file in os.listdir(self.saved_chats_dir):
+            if chat_file.endswith(".json"):
+                file_path = os.path.join(self.saved_chats_dir, chat_file)
+                with open(file_path, "r", encoding="utf-8") as f:
+                    chat_data = json.load(f)
+                    chats.append({
+                        "chat_id": chat_data["chat_id"],
+                        "chat_name": chat_data["chat_name"]
+                    })
+        return chats
     
     def delete_chat(self, chat_id: str) -> None:
         """Delete a chat history file."""
-        chat_file = self.chat_dir / f"{chat_id}.json"
-        if chat_file.exists():
-            chat_file.unlink()
+        file_path = os.path.join(self.saved_chats_dir, f"{chat_id}.json")
+        os.remove(file_path)
     
     def generate_chat_name(self, first_message: str, llm) -> str:
         """Generate a chat name using LLM."""
@@ -90,11 +64,8 @@ class ChatService:
             HumanMessage(content=user_prompt)
         ]
         
+        # Handle both string and AIMessage responses
         response = llm.invoke(messages)
-        title = response.content.strip()
-        
-        # Add timestamp to the title
-        now = datetime.now()
-        date_str = now.strftime("%d-%b-%Y")
-        time_str = now.strftime("%I:%M %p")
-        return f"{title} {date_str} @ {time_str}" 
+        if isinstance(response, str):
+            return response.strip()
+        return response.content.strip() 
