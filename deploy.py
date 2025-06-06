@@ -16,10 +16,11 @@ from pathlib import Path
 from typing import Optional, Dict, List, Tuple
 import yaml
 import re
+from rich import box
 
 try:
     from rich.console import Console
-    from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
+    from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeElapsedColumn
     from rich.prompt import Prompt, Confirm
     from rich.panel import Panel
     from rich.text import Text
@@ -30,7 +31,7 @@ except ImportError:
     print("📦 Installing required packages...")
     subprocess.check_call([sys.executable, "-m", "pip", "install", "rich"])
     from rich.console import Console
-    from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
+    from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeElapsedColumn
     from rich.prompt import Prompt, Confirm
     from rich.panel import Panel
     from rich.text import Text
@@ -40,18 +41,17 @@ except ImportError:
 class DatabricksDeployer:
     """Smart Databricks deployment with rich UI and error handling."""
     
-    def __init__(self, dry_run: bool = False, interactive: bool = False):
-        self.dry_run = dry_run
-        self.interactive = interactive
+    def __init__(self):
+        """Initialize the deployer with Rich console for pretty output."""
         self.console = Console()
+        self.app_name = None
+        self.workspace_url = None
         
         # Deployment configuration
         self.user_email: Optional[str] = None
         self.user_name: Optional[str] = None
-        self.workspace_url: Optional[str] = None
         self.scope_name: Optional[str] = None
         self.secret_name: Optional[str] = None
-        self.app_name: Optional[str] = None
         self.workspace_path: Optional[str] = None
         
         # Environment info for deployment summaries
@@ -59,122 +59,40 @@ class DatabricksDeployer:
         self.python_version: Optional[str] = None
         self.cloud_provider: Optional[str] = None
         
-    def run_databricks_command(self, cmd: List[str], capture_output: bool = True, timeout: int = 30, debug: bool = False) -> Tuple[bool, str]:
-        """Run a Databricks CLI command with proper error handling."""
+        # Mode flags
+        self.dry_run: bool = False
+        self.interactive: bool = False
+    
+    def run_databricks_command(self, args: List[str], input_data: Optional[str] = None, timeout: Optional[int] = None) -> Tuple[bool, str]:
+        """Run a databricks CLI command and return success status and output."""
         try:
-            # Prepare environment
-            env = os.environ.copy()
-            
-            # If we're in Cursor/VSCode, ensure we're using the system CLI
-            if 'DATABRICKS_CLI_UPSTREAM' in env:
-                env['DATABRICKS_CLI_DO_NOT_EXECUTE_NEWER_VERSION'] = '1'
-                # Try to find system CLI
-                possible_paths = [
-                    '/usr/local/bin/databricks',
-                    '/opt/homebrew/bin/databricks',
-                    '/usr/bin/databricks'
-                ]
-                for path in possible_paths:
-                    if os.path.exists(path):
-                        if debug:
-                            self.console.print(f"[dim]Using system CLI at {path}[/dim]")
-                        cli_cmd = [path]
-                        break
+            cmd = ["databricks"] + args
+            if input_data:
+                process = subprocess.Popen(
+                    cmd,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True
+                )
+                stdout, stderr = process.communicate(input=input_data, timeout=timeout)
+                if process.returncode == 0:
+                    return True, stdout
                 else:
-                    cli_cmd = ["databricks"]
+                    return False, stderr
             else:
-                # Use stored CLI path if available
-                cli_cmd = [self.cli_path] if hasattr(self, 'cli_path') else ["databricks"]
-            
-            # Build full command
-            full_cmd = cli_cmd + cmd
-            
-            if debug:
-                self.console.print(f"[dim]Running: {' '.join(full_cmd)}[/dim]")
-            
-            # Run command
-            result = subprocess.run(
-                full_cmd,
-                capture_output=capture_output,
-                text=True,
-                timeout=timeout,
-                env=env
-            )
-            
-            # Clean up output by removing CLI version messages and warnings
-            output_lines = []
-            if result.stdout:
-                for line in result.stdout.split('\n'):
-                    # Skip empty lines
-                    if not line.strip():
-                        continue
-                        
-                    # Skip CLI version related messages and common warnings
-                    if any(x in line for x in [
-                        "Databricks CLI v",
-                        "Your current $PATH prefers running CLI",
-                        "Because both are installed",
-                        "If you want to disable this behavior",
-                        "Executing CLI v",
-                        "-------------------------",
-                        "Loaded config from app.yaml",  # Skip duplicate config messages
-                        "NotOpenSSLWarning",
-                        "urllib3",
-                        "LibreSSL",
-                        "warnings.warn",
-                        "version",  # Skip any version-related output
-                        "Version"
-                    ]):
-                        continue
-                        
-                    output_lines.append(line)
-            
-            cleaned_stdout = '\n'.join(output_lines).strip()
-            
-            if debug and result.stderr and result.stderr.strip():
-                # Clean up stderr too
-                stderr_lines = []
-                for line in result.stderr.split('\n'):
-                    if not line.strip():
-                        continue
-                    if not any(x in line for x in [
-                        "NotOpenSSLWarning",
-                        "urllib3",
-                        "LibreSSL",
-                        "warnings.warn",
-                        "Databricks CLI v",
-                        "Your current $PATH prefers running CLI",
-                        "Because both are installed",
-                        "If you want to disable this behavior",
-                        "Executing CLI v",
-                        "-------------------------",
-                        "version",  # Skip any version-related output
-                        "Version"
-                    ]):
-                        stderr_lines.append(line)
-                if stderr_lines:
-                    self.console.print("[yellow]Debug - stderr: " + "\n".join(stderr_lines) + "[/yellow]")
-            
-            if result.returncode == 0:
-                if debug and cleaned_stdout:
-                    self.console.print(f"[dim]Debug - stdout: {cleaned_stdout}[/dim]")
-                return True, cleaned_stdout
-            else:
-                # Clean up the error message for better display
-                error_msg = self.clean_error_message(result.stderr)
-                if debug:
-                    self.console.print(f"[red]Debug - Command failed with code {result.returncode}[/red]")
-                return False, error_msg
-                
+                if timeout:
+                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+                else:
+                    result = subprocess.run(cmd, capture_output=True, text=True)
+                    
+                if result.returncode == 0:
+                    return True, result.stdout
+                else:
+                    return False, result.stderr
         except subprocess.TimeoutExpired:
-            return False, f"Command timed out after {timeout} seconds"
-        except FileNotFoundError as e:
-            if debug:
-                self.console.print(f"[red]Debug - FileNotFoundError: {e}[/red]")
-            return False, "Databricks CLI not found"
+            return False, "Command timed out"
         except Exception as e:
-            if debug:
-                self.console.print(f"[red]Debug - Unexpected error: {e}[/red]")
             return False, str(e)
     
     def clean_error_message(self, raw_error: str) -> str:
@@ -363,146 +281,61 @@ class DatabricksDeployer:
             success, version_output = self.run_databricks_command(["version"])
             if not success:
                 self.console.print("[red]❌ Databricks CLI not found. Please install it first:[/red]")
-                self.console.print("curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/v0.254.0/install.sh | sudo sh")
+                self.console.print("curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh")
                 return False
-            
-            # Parse CLI version information using regex
-            version_pattern = re.compile(r'(?:Databricks CLI v|CLI v|version[\s:]?)(\d+\.\d+\.\d+)', re.IGNORECASE)
-            cli_versions = {}
-            
-            # First try to find versions in the version output
-            for line in version_output.split('\n'):
-                # Skip empty lines
-                if not line.strip():
-                    continue
-                    
-                # Match the version pattern
-                match = version_pattern.search(line)
-                if match:
-                    version = match.group(1)
-                    # If "found at" is in the line, extract the path
-                    if "found at" in line:
-                        path = line.split("found at")[-1].strip()
-                        cli_versions[version] = path
-                    # If it's a PATH preference line
-                    elif "Your current $PATH prefers running CLI" in line:
-                        path = line.split("at")[-1].strip()
-                        cli_versions[version] = path
-                    # If it's just the version line
-                    else:
-                        cli_versions[version] = cli_versions.get(version, 'databricks')
-            
-            # If no version found, try --version as fallback
-            if not cli_versions:
-                success, alt_version_output = self.run_databricks_command(["--version"])
-                if success:
-                    for line in alt_version_output.split('\n'):
-                        if not line.strip():
-                            continue
-                        # Try both "version" and "v" formats
-                        match = version_pattern.search(line)
-                        if match:
-                            version = match.group(1)
-                            cli_versions[version] = 'databricks'
-                            break
-            
-            # Final check for version detection
-            if not cli_versions:
-                # Try one more time with a more lenient pattern
-                lenient_pattern = re.compile(r'v?(\d+\.\d+\.\d+)', re.IGNORECASE)
-                for line in version_output.split('\n'):
-                    if not line.strip():
-                        continue
-                    match = lenient_pattern.search(line)
-                    if match:
-                        version = match.group(1)
-                        cli_versions[version] = 'databricks'
-                        break
-            
-            if not cli_versions:
-                self.console.print("[yellow]⚠️  Could not determine CLI version[/yellow]")
-                # Continue anyway since the CLI is responding
-                self.cli_version = "Unknown"
-                self.cli_path = "databricks"
-            else:
-                # Store CLI information
-                newest_version = max(cli_versions.keys(), key=lambda v: [int(x) for x in v.split('.')])
-                self.cli_version = newest_version
-                self.cli_path = cli_versions[newest_version]
                 
-                # Show version info
-                if len(cli_versions) > 1:
-                    self.console.print()
-                    self.console.print(Panel(
-                        "[yellow]⚠️  Multiple Databricks CLI versions detected:[/yellow]\n\n" +
-                        "\n".join(f"  • v{ver}: {path}" for ver, path in cli_versions.items()) +
-                        f"\n\n[blue]Using newest version v{newest_version} at {cli_versions[newest_version]}[/blue]\n\n" +
-                        "[yellow]To avoid version conflicts, consider:[/yellow]\n" +
-                        "  1. Removing older versions\n" +
-                        "  2. Setting DATABRICKS_CLI_DO_NOT_EXECUTE_NEWER_VERSION=1 to use venv version\n" +
-                        "  3. Updating your PATH to prioritize the desired version",
-                        title="🔧 CLI Version Check",
-                        style="yellow"
-                    ))
-                else:
-                    self.console.print(f"[green]✅ Using Databricks CLI v{newest_version}[/green]")
-            
             # Check if CLI is configured by trying to get user info
             success, output = self.run_databricks_command(["current-user", "me", "--output", "json"])
             if not success:
-                if self.dry_run:
-                    self.console.print("[yellow]⚠️  [DRY RUN] CLI not configured. For real deployment, run: databricks configure --token[/yellow]")
-                    return False
-                else:
-                    self.console.print("[red]❌ CLI not configured. Please run:[/red]")
-                    self.console.print("databricks configure --token")
-                    return False
-            
-            # Extract user information - handle both old and new CLI formats
-            user_data = self.extract_json_from_output(output)
-            if not user_data:
-                self.console.print("[red]❌ Failed to parse user information[/red]")
+                self.console.print("[red]❌ CLI not configured. Please run:[/red]")
+                self.console.print("databricks configure --token")
                 return False
-            
-            # New CLI format (v0.254.0+)
-            if "emails" in user_data and isinstance(user_data["emails"], list):
-                for email in user_data["emails"]:
-                    if email.get("primary") and "value" in email:
-                        self.user_email = email["value"]
-                        break
+                
+            # Extract user information
+            try:
+                user_data = json.loads(output)
+                if "emails" in user_data and isinstance(user_data["emails"], list):
+                    for email in user_data["emails"]:
+                        if email.get("primary") and "value" in email:
+                            self.user_email = email["value"]
+                            break
                 if not self.user_email and "userName" in user_data:
                     self.user_email = user_data["userName"]
-            # Old CLI format
-            elif "userName" in user_data:
-                self.user_email = user_data["userName"]
-            else:
-                self.console.print("[red]❌ Could not determine user email[/red]")
+                    
+                if not self.user_email:
+                    self.console.print("[red]❌ Could not determine user email[/red]")
+                    return False
+                
+                self.user_name = self.user_email.split('@')[0].replace('.', '-')
+            except Exception as e:
+                self.console.print(f"[red]❌ Failed to parse user information: {e}[/red]")
                 return False
-            
-            self.user_name = self.user_email.split('@')[0].replace('.', '-')
             
             # Get workspace information - try multiple methods
             self.workspace_url = None
-            self.cloud_provider = None
             
-            # Method 1: Try getting from profiles (new CLI format)
+            # Method 1: Try getting from profiles
             success, profiles_output = self.run_databricks_command(["auth", "profiles", "--output", "json"])
             if success:
-                profiles_data = self.extract_json_from_output(profiles_output)
-                if profiles_data and "profiles" in profiles_data:
-                    for profile in profiles_data["profiles"]:
-                        if profile.get("valid"):
-                            self.workspace_url = profile.get("host")
-                            self.cloud_provider = profile.get("cloud")
-                            break
+                try:
+                    profiles_data = json.loads(profiles_output)
+                    if profiles_data and "profiles" in profiles_data:
+                        for profile in profiles_data["profiles"]:
+                            if profile.get("valid"):
+                                self.workspace_url = profile.get("host")
+                                break
+                except:
+                    pass
             
             # Method 2: Try getting from config if Method 1 failed
             if not self.workspace_url:
                 success, config_output = self.run_databricks_command(["config", "get", "--output", "json"])
                 if success:
-                    config_data = self.extract_json_from_output(config_output)
-                    if config_data and "host" in config_data:
-                        self.workspace_url = config_data["host"]
+                    try:
+                        config_data = json.loads(config_output)
+                        self.workspace_url = config_data.get("host")
+                    except:
+                        pass
             
             # Method 3: Parse from regular profiles output as last resort
             if not self.workspace_url:
@@ -515,35 +348,16 @@ class DatabricksDeployer:
                                 self.workspace_url = parts[1]
                                 break
             
-            # Final check and fallback
             if not self.workspace_url:
-                if self.dry_run:
-                    self.console.print("[yellow]⚠️  [DRY RUN] Could not determine workspace URL[/yellow]")
-                    self.workspace_url = "https://demo.cloud.databricks.com"
-                else:
-                    self.console.print("[red]❌ Could not determine workspace URL. Please check your Databricks CLI configuration.[/red]")
-                    return False
+                self.console.print("[red]❌ Could not determine workspace URL[/red]")
+                return False
             
-            # Get additional workspace information
-            success, workspace_output = self.run_databricks_command(["workspace", "get-status", "--output", "json"])
-            if success:
-                workspace_data = self.extract_json_from_output(workspace_output)
-                if workspace_data:
-                    # Store additional workspace info that might be useful later
-                    self.workspace_id = workspace_data.get("workspace_id")
-                    self.workspace_name = workspace_data.get("workspace_name", self.workspace_url.split('.')[1] if '.' in self.workspace_url else None)
-            
-            # If we don't have a workspace name, try to derive it from the URL
-            if not hasattr(self, 'workspace_name') or not self.workspace_name:
-                parts = self.workspace_url.split('.')
-                if len(parts) > 1:
-                    self.workspace_name = parts[1]
-            
+            progress.update(task, description="✅ Prerequisites met")
             return True
     
-    def show_connection_info(self, context: str = "deploy"):
-        """Display connection information."""
-        table = Table(show_header=False, box=None)
+    def show_connection_info(self, context: str = "deploy") -> bool:
+        """Show current connection information."""
+        table = Table(show_header=False, box=box.ROUNDED)
         table.add_column(style="green bold")
         table.add_column()
         
@@ -571,6 +385,7 @@ class DatabricksDeployer:
             
             # Get workspace info if needed
             if not has_workspace:
+                # Method 1: Try getting from profiles (new CLI format)
                 success, profiles_output = self.run_databricks_command(["auth", "profiles", "--output", "json"])
                 if success:
                     profiles_data = self.extract_json_from_output(profiles_output)
@@ -581,31 +396,58 @@ class DatabricksDeployer:
                                 self.cloud_provider = profile.get("cloud")
                                 has_workspace = True
                                 break
+                
+                # Method 2: Try getting from config if Method 1 failed
+                if not has_workspace:
+                    success, config_output = self.run_databricks_command(["config", "get", "--output", "json"])
+                    if success:
+                        config_data = self.extract_json_from_output(config_output)
+                        if config_data and "host" in config_data:
+                            self.workspace_url = config_data["host"]
+                            has_workspace = True
+                
+                # Method 3: Try workspace status as last resort
+                if not has_workspace:
+                    success, workspace_output = self.run_databricks_command(["workspace", "get-status", "--output", "json"])
+                    if success:
+                        workspace_data = self.extract_json_from_output(workspace_output)
+                        if workspace_data and "workspace_url" in workspace_data:
+                            self.workspace_url = workspace_data["workspace_url"]
+                            has_workspace = True
         
         # Display what information we have
+        self.console.print()
+        self.console.print(Panel(
+            "[bold cyan]🔗 Connection Details[/bold cyan]",
+            style="cyan"
+        ))
+        
         if has_user:
-            table.add_row("✅ Connected as:", self.user_email)
+            table.add_row("👤 User:", self.user_email)
         else:
             table.add_row("❌ User:", "Not available (auth issue)")
             
         if has_workspace:
-            table.add_row("✅ Workspace:", self.workspace_url)
+            table.add_row("🌐 Workspace:", self.workspace_url)
+            # Extract workspace name from URL for display
+            workspace_name = self.workspace_url.split('.')[1] if '.' in self.workspace_url else "Unknown"
+            table.add_row("📍 Region:", workspace_name)
+            if hasattr(self, 'cloud_provider') and self.cloud_provider:
+                table.add_row("☁️ Cloud:", self.cloud_provider.upper())
         else:
             table.add_row("❌ Workspace:", "Not available (config issue)")
         
-        # Add additional workspace info if available
-        if hasattr(self, 'workspace_name') and self.workspace_name:
-            table.add_row("✅ Workspace Name:", self.workspace_name)
-        if hasattr(self, 'workspace_id') and self.workspace_id:
-            table.add_row("✅ Workspace ID:", self.workspace_id)
-        if hasattr(self, 'cloud_provider') and self.cloud_provider:
-            table.add_row("✅ Cloud Provider:", self.cloud_provider.upper())
-        
         self.console.print(table)
-        self.console.print()
+        
+        # Show CLI version
+        success, version_output = self.run_databricks_command(["version"])
+        if success:
+            version = version_output.strip()
+            self.console.print(f"[dim]CLI Version: {version}[/dim]")
         
         # Show warning if information is incomplete
         if not has_user or not has_workspace:
+            self.console.print()
             self.console.print(Panel(
                 "[yellow]⚠️  Connection information is incomplete[/yellow]\n\n"
                 "This might be due to:\n"
@@ -630,14 +472,13 @@ class DatabricksDeployer:
             elif context == "status":
                 prompt = "Check status in this workspace?"
             else:
-                prompt = f"Continue with {context} in this workspace?"
+                prompt = "Continue with this workspace?"
                 
             if not Confirm.ask(prompt, default=True):
-                action = context.replace("deploy", "deployment").replace("status", "status check")
-                self.console.print(f"[yellow]⏹️  {action.title()} cancelled. Use 'databricks configure --token' to switch workspaces[/yellow]")
+                self.console.print("[yellow]⏹️  Please configure the correct workspace with 'databricks configure --token'[/yellow]")
                 return False
         
-        return True
+        return has_user and has_workspace
     
     def configure_scope(self) -> bool:
         """Configure the secret scope."""
@@ -1005,11 +846,23 @@ class DatabricksDeployer:
         
         self.interactive_pause()
         
-        # Configure app.yaml with CORRECT port (8501 for Streamlit, NOT 8000!)
-        app_yaml_content = f"""command: ['streamlit', 'run', 'app.py', '--server.port=8501', '--server.address=0.0.0.0', '--server.headless=true']
+        # Configure app.yaml with CORRECT port (8000 for Databricks Apps)
+        app_yaml_content = f"""command: ['streamlit', 'run', 'app.py']
 env:
   - name: 'OPENAI_API_KEY'
     value: '{{{{secrets/{self.scope_name}/{self.secret_name}}}}}'
+  - name: 'STREAMLIT_BROWSER_GATHER_USAGE_STATS'
+    value: 'false'
+  - name: 'STREAMLIT_SERVER_ADDRESS'
+    value: '0.0.0.0'
+  - name: 'STREAMLIT_SERVER_ENABLE_CORS'
+    value: 'false'
+  - name: 'STREAMLIT_SERVER_ENABLE_XSRF_PROTECTION'
+    value: 'false'
+  - name: 'STREAMLIT_SERVER_HEADLESS'
+    value: 'true'
+  - name: 'STREAMLIT_SERVER_PORT'
+    value: '8000'
 
 permissions:
   - group_name: 'users'
@@ -1163,7 +1016,7 @@ resources:
                             f"[bold cyan]📋 Deployment Summary:[/bold cyan]\n"
                             f"  • [bold]App Name:[/bold] {self.app_name}\n"
                             f"  • [bold]Secret Scope:[/bold] {self.scope_name}\n"
-                            f"  • [bold]Port Configuration:[/bold] 8501 (Streamlit)\n"
+                            f"  • [bold]Port Configuration:[/bold] 8000 (Databricks)\n"
                             f"  • [bold]Unity Catalog:[/bold] Permissions configured\n"
                             f"  • [bold]Platform:[/bold] {self.workspace_url.split('.')[0].replace('https://', '')} (Databricks)\n"
                             f"  • [bold]Deployed by:[/bold] {self.user_email}\n\n"
@@ -1183,7 +1036,7 @@ resources:
                             "[bold yellow]⚠️  If you see 'App Not Available':[/bold yellow]\n"
                             "  • Wait 30-60 seconds for app to fully start\n"
                             "  • Clear browser cache or try incognito mode\n"
-                            "  • Verify port 8501 in app.yaml (common issue!)\n"
+                            "  • Verify port 8000 in app.yaml (common issue!)\n"
                             "  • Check Unity Catalog permissions\n"
                             f"  • Debug: databricks apps get {self.app_name} --output json\n\n"
                             "[bold cyan]👥 To share with others:[/bold cyan]\n"
@@ -1216,8 +1069,27 @@ resources:
         # Show connection info
         if not self.show_connection_info("deploy"):
             return False
+            
+        # Check for shared scopes first
+        self.console.print("\n[bold cyan]🔍 Checking for shared scopes...[/bold cyan]")
+        success, output = self.run_databricks_command(["secrets", "list-scopes"])
+        if success:
+            lines = output.strip().split('\n')[1:] if output.strip() else []
+            shared_scopes = [line.split()[0] for line in lines if line.strip() and line.split()[0].lower().startswith('shared-')]
+            
+            if shared_scopes:
+                self.console.print(f"[green]✅ Found {len(shared_scopes)} shared scopes![/green]")
+                self.console.print("\n[bold]Available shared scopes:[/bold]")
+                for scope in sorted(shared_scopes):
+                    self.console.print(f"• {scope}")
+                
+                if Confirm.ask("\nWould you like to use a shared scope? (recommended for demos)", default=True):
+                    scope_name = Prompt.ask("Enter the shared scope name", choices=shared_scopes, default=shared_scopes[0])
+                    self.scope_name = scope_name
+                    self.console.print(f"[green]✅ Using shared scope: {scope_name}[/green]")
+                    return True
         
-        # Configure scope
+        # If no shared scopes or user declined, continue with regular scope configuration
         if not self.configure_scope():
             return False
         
@@ -1242,9 +1114,9 @@ resources:
         return self.show_deployment_summary()
     
     def redeploy(self) -> bool:
-        """Quick redeploy: sync code and redeploy existing app."""
+        """Quick redeploy of existing app."""
         self.console.print(Panel(
-            "[bold cyan]🔄 Quick Redeploy Mode[/bold cyan]\n\n"
+            "[bold blue]🔄 Quick Redeploy Mode[/bold blue]\n\n"
             "This will:\n"
             "  1. Load configuration from app.yaml\n"
             "  2. Sync your code to the workspace\n"
@@ -1408,7 +1280,7 @@ resources:
                             f"[bold blue]{app_url}[/bold blue]\n\n"
                             f"[bold cyan]📋 Redeploy Summary:[/bold cyan]\n"
                             f"  • [bold]App Name:[/bold] {self.app_name}\n"
-                            f"  • [bold]Port:[/bold] 8501 (Streamlit)\n"
+                            f"  • [bold]Port:[/bold] 8000 (Databricks)\n"
                             f"  • [bold]Unity Catalog:[/bold] Permissions active\n"
                             f"  • [bold]Code Sync:[/bold] ✅ Latest changes deployed\n"
                             f"  • [bold]Platform:[/bold] {self.workspace_url.split('.')[0].replace('https://', '')} (Databricks)\n"
@@ -1426,7 +1298,7 @@ resources:
                             "[bold yellow]⚠️  If you see 'App Not Available':[/bold yellow]\n"
                             "  • Wait 30-60 seconds for app to restart\n"
                             "  • Clear browser cache/try incognito mode\n"
-                            "  • Check port 8501 in app.yaml (common fix!)\n"
+                            "  • Check port 8000 in app.yaml (common fix!)\n"
                             "  • Check Unity Catalog permissions\n"
                             f"  • Debug: databricks apps get {self.app_name} --output json",
                             title="🔄 Redeploy Complete",
@@ -1595,7 +1467,7 @@ resources:
   • [bold]Compute Status:[/bold] {compute_state} - {compute_message}
 
 [bold cyan]🔧 Technical Configuration:[/bold cyan]
-  • [bold]Port:[/bold] 8501 (Streamlit)
+  • [bold]Port:[/bold] 8000 (Databricks)
   • [bold]Unity Catalog:[/bold] Permissions active
   • [bold]Platform:[/bold] {app_url.split('.')[1] if '.' in app_url else 'Unknown'} (Databricks)
   • [bold]Runtime:[/bold] Python with Streamlit framework
@@ -1656,7 +1528,7 @@ resources:
             tips.extend([
                 "App is not running:",
                 "• Check deployment logs for errors",
-                "• Verify app.yaml uses port 8501 (common issue!)",
+                "• Verify app.yaml uses port 8000 (common issue!)",
                 "• Ensure all dependencies are available",
                 "• Check Unity Catalog permissions"
             ])
@@ -1703,82 +1575,546 @@ resources:
             style="blue"
         ))
 
+    def stop_app(self) -> bool:
+        """Stop the running app."""
+        self.console.print(Panel(
+            "[bold red]🛑 Stop App[/bold red]\n\n"
+            "This will:\n"
+            "  1. Stop the running app\n"
+            "  2. Free up compute resources\n"
+            "  3. Make the app temporarily unavailable\n\n"
+            "[yellow]⚠️  The app can be restarted later using --start[/yellow]",
+            title="🛑 Stop App",
+            style="red"
+        ))
+        
+        # Check prerequisites
+        if not self.check_prerequisites():
+            return False
+        
+        # Load configuration from app.yaml
+        if not self.load_config_from_yaml():
+            return False
+        
+        # Show connection info
+        if not self.show_connection_info("stop"):
+            return False
+        
+        # Confirm stop
+        if not Confirm.ask("🛑 Are you sure you want to stop the app?", default=False):
+            self.console.print("[yellow]⏹️  Stop cancelled[/yellow]")
+            return False
+        
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            console=self.console
+        ) as progress:
+            task = progress.add_task("🛑 Stopping app...", total=100)
+            
+            success, output = self.run_databricks_command([
+                "apps", "stop", self.app_name
+            ], timeout=60)
+            
+            if success:
+                progress.update(task, advance=100, description="✅ App stopped successfully")
+                
+                self.console.print()
+                self.console.print(Panel(
+                    "[bold green]✅ App stopped successfully![/bold green]\n\n"
+                    "[bold cyan]📋 Stop Summary:[/bold cyan]\n"
+                    f"  • [bold]App Name:[/bold] {self.app_name}\n"
+                    f"  • [bold]Status:[/bold] STOPPED\n"
+                    f"  • [bold]Compute:[/bold] Released\n\n"
+                    "[bold cyan]🔄 To restart the app:[/bold cyan]\n"
+                    "  python deploy.py --start",
+                    title="🛑 Stop Complete",
+                    style="green"
+                ))
+                return True
+            else:
+                self.display_friendly_error(output, "Stopping App")
+                return False
+
+    def delete_app(self) -> bool:
+        """Delete the app completely."""
+        self.console.print(Panel(
+            "[bold red]⚠️ Delete App[/bold red]\n\n"
+            "This will:\n"
+            "  1. Stop the running app\n"
+            "  2. Delete all app resources\n"
+            "  3. Remove the app configuration\n\n"
+            "[red]⚠️  THIS ACTION CANNOT BE UNDONE![/red]",
+            title="⚠️ Delete App",
+            style="red"
+        ))
+        
+        # Check prerequisites
+        if not self.check_prerequisites():
+            return False
+        
+        # Load configuration from app.yaml
+        if not self.load_config_from_yaml():
+            return False
+        
+        # Show connection info
+        if not self.show_connection_info("delete"):
+            return False
+        
+        # Double confirm deletion
+        self.console.print(f"\n[bold red]⚠️  You are about to delete the app: {self.app_name}[/bold red]")
+        if not Confirm.ask("Are you absolutely sure?", default=False):
+            self.console.print("[yellow]⏹️  Deletion cancelled[/yellow]")
+            return False
+        
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            TimeElapsedColumn(),
+            console=self.console
+        ) as progress:
+            delete_task = progress.add_task("🗑️ Initiating app deletion...", total=100)
+            
+            # Start the deletion
+            success, output = self.run_databricks_command([
+                "apps", "delete", self.app_name
+            ])
+            
+            if not success:
+                self.display_friendly_error(output, "Initiating App Deletion")
+                return False
+                
+            progress.update(delete_task, advance=20, description="🗑️ Deletion in progress...")
+            
+            # Monitor deletion progress
+            max_attempts = 30  # 5 minutes total (10 second intervals)
+            attempt = 0
+            
+            while attempt < max_attempts:
+                success, status_output = self.run_databricks_command([
+                    "apps", "get", self.app_name, "--output", "json"
+                ])
+                
+                if not success:
+                    # If app not found, deletion is complete
+                    if "not found" in status_output.lower():
+                        progress.update(delete_task, advance=100, description="✅ App deleted successfully")
+                        break
+                        
+                # Wait 10 seconds before next check
+                time.sleep(10)
+                attempt += 1
+                progress.update(delete_task, advance=2, description="🗑️ Deletion in progress...")
+                
+            if attempt >= max_attempts:
+                self.console.print("[yellow]⚠️ Deletion is taking longer than expected. Please check the app status manually.[/yellow]")
+                return False
+                
+            # Clean up app.yaml
+            if os.path.exists("app.yaml"):
+                os.remove("app.yaml")
+            
+            self.console.print()
+            self.console.print(Panel(
+                "[bold green]✅ App deleted successfully![/bold green]\n\n"
+                "[bold cyan]📋 Deletion Summary:[/bold cyan]\n"
+                f"  • [bold]App Name:[/bold] {self.app_name}\n"
+                f"  • [bold]Status:[/bold] DELETED\n"
+                f"  • [bold]Resources:[/bold] Cleaned up\n"
+                f"  • [bold]Configuration:[/bold] Removed\n\n"
+                "[bold cyan]🔄 To recreate the app:[/bold cyan]\n"
+                "  python deploy.py",
+                title="🗑️ Delete Complete",
+                style="green"
+            ))
+            return True
+
+    def start_app(self) -> bool:
+        """Start a stopped app."""
+        # Check prerequisites first
+        if not self.check_prerequisites():
+            return False
+        
+        # Load configuration from app.yaml
+        if not self.load_config_from_yaml():
+            return False
+        
+        # Check if app is already running BEFORE showing any panels
+        success, status_output = self.run_databricks_command([
+            "apps", "get", self.app_name, "--output", "json"
+        ], timeout=30)
+        
+        if success:
+            app_data = self.extract_json_from_output(status_output)
+            if app_data:
+                app_status = app_data.get("app_status", {}).get("state", "")
+                compute_status = app_data.get("compute_status", {}).get("state", "")
+                app_url = app_data.get("url", "Not available")
+                
+                if compute_status == "ACTIVE" or app_status == "RUNNING":
+                    self.console.print(Panel(
+                        "[green]✅ Great news! Your app is already up and running![/green]\n\n"
+                        "[bold yellow]🌐 App URL:[/bold yellow]\n"
+                        f"[bold blue]{app_url}[/bold blue]\n\n"
+                        "[bold cyan]📋 Current Status:[/bold cyan]\n"
+                        f"  • [bold]App Status:[/bold] {app_status}\n"
+                        f"  • [bold]Compute Status:[/bold] {compute_status}\n\n"
+                        "[bold cyan]💡 Available Actions:[/bold cyan]\n"
+                        "  • To update code:    python deploy.py --redeploy\n"
+                        "  • To check status:   python deploy.py --status\n"
+                        "  • To stop the app:   python deploy.py --stop",
+                        title="✅ App Ready",
+                        style="green"
+                    ))
+                    return True
+        
+        # Only show start panel and ask for confirmation if app isn't already running
+        self.console.print(Panel(
+            "[bold green]▶️ Start App[/bold green]\n\n"
+            "This will:\n"
+            "  1. Start the stopped app\n"
+            "  2. Provision compute resources (may take 2-5 minutes)\n"
+            "  3. Make the app available again\n\n"
+            "[yellow]Note: For faster restarts with code updates, use --redeploy[/yellow]",
+            title="▶️ Start App",
+            style="green"
+        ))
+        
+        # Show connection info and get confirmation
+        if not self.show_connection_info("start"):
+            return False
+        
+        # Rest of the existing start_app code...
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            console=self.console
+        ) as progress:
+            # Start the app
+            task1 = progress.add_task("▶️ Starting app...", total=100)
+            
+            success, output = self.run_databricks_command([
+                "apps", "start", self.app_name
+            ], timeout=60)  # The start command itself is quick
+            
+            if not success:
+                self.display_friendly_error(output, "Starting App")
+                return False
+                
+            progress.update(task1, advance=100, description="✅ Start command sent")
+            
+            # Wait for compute to be ready
+            task2 = progress.add_task("⚙️ Waiting for compute (2-5 mins)...", total=100)
+            
+            retries = 20  # 20 retries * 15 seconds = 5 minutes max wait
+            for i in range(retries):
+                success, status_output = self.run_databricks_command([
+                    "apps", "get", self.app_name, "--output", "json"
+                ], timeout=30)
+                
+                if success:
+                    app_data = self.extract_json_from_output(status_output)
+                    if app_data:
+                        app_status = app_data.get("app_status", {}).get("state", "")
+                        compute_status = app_data.get("compute_status", {}).get("state", "")
+                        app_url = app_data.get("url", "Not available")
+                        
+                        # Calculate time elapsed
+                        mins_elapsed = (i + 1) * 15 // 60
+                        secs_elapsed = (i + 1) * 15 % 60
+                        time_msg = f"{mins_elapsed}m {secs_elapsed}s elapsed"
+                        
+                        progress.update(task2, description=f"⚙️ Compute status: {compute_status} ({time_msg})")
+                        
+                        if app_status == "RUNNING" and compute_status == "ACTIVE":
+                            progress.update(task2, advance=100, description="✅ Compute ready")
+                            
+                            # Show success message with URL
+                            if "url" in app_data:
+                                app_url = app_data["url"]
+                                self.console.print()
+                                self.console.print(Panel(
+                                    "[bold green]✅ App started successfully![/bold green]\n\n"
+                                    "[bold yellow]🌐 App URL:[/bold yellow]\n"
+                                    f"[bold blue]{app_url}[/bold blue]\n\n"
+                                    "[bold cyan]📋 Start Summary:[/bold cyan]\n"
+                                    f"  • [bold]App Name:[/bold] {self.app_name}\n"
+                                    f"  • [bold]Status:[/bold] RUNNING\n"
+                                    f"  • [bold]Compute:[/bold] Active\n"
+                                    f"  • [bold]Time taken:[/bold] {time_msg}\n\n"
+                                    "[bold yellow]⚠️  If you see 'App Not Available':[/bold yellow]\n"
+                                    "  • Wait 30-60 seconds for app to fully start\n"
+                                    "  • Clear browser cache or try incognito mode\n\n"
+                                    "[bold cyan]💡 Pro Tips:[/bold cyan]\n"
+                                    "  • Use --redeploy for faster restarts with code updates\n"
+                                    "  • Use --status to check app health",
+                                    title="▶️ Start Complete",
+                                    style="green"
+                                ))
+                                return True
+                
+                progress.update(task2, advance=100/retries)
+                time.sleep(15)  # Wait 15 seconds between checks
+            
+            self.console.print("[red]❌ Timeout waiting for compute to be ready (5 minutes)[/red]")
+            self.console.print("[yellow]The app might still be starting. Check status with: python deploy.py --status[/yellow]")
+            return False
+
+    def deploy(self) -> bool:
+        """Deploy the app (default action when no arguments provided)."""
+        self.console.print(Panel(
+            "[bold blue]📦 Deploy App[/bold blue]\n\n"
+            "This will:\n"
+            "  1. Package your app\n"
+            "  2. Deploy to Databricks\n"
+            "  3. Start the app\n",
+            title="📦 Deploy App",
+            style="blue"
+        ))
+        
+        # Check prerequisites - this will set up user_email, workspace_url etc.
+        if not self.check_prerequisites():
+            return False
+        
+        # Check if app.yaml exists and try to load it
+        is_fresh_deploy = not os.path.exists("app.yaml")
+        if not is_fresh_deploy:
+            try:
+                with open("app.yaml", "r") as f:
+                    config = yaml.safe_load(f)
+                # Verify required fields
+                if not all(k in config for k in ["workspace_url", "app_name", "secret_scope", "secret_key"]):
+                    self.console.print("[yellow]⚠️ Existing app.yaml is incomplete. Starting fresh deployment...[/yellow]")
+                    is_fresh_deploy = True
+                else:
+                    self.workspace_url = config["workspace_url"]
+                    self.app_name = config["app_name"]
+                    self.scope_name = config["secret_scope"]
+                    self.secret_name = config["secret_key"]
+            except Exception as e:
+                self.console.print(f"[yellow]⚠️ Error reading app.yaml: {e}. Starting fresh deployment...[/yellow]")
+                is_fresh_deploy = True
+        
+        if is_fresh_deploy:
+            self.console.print("[yellow]📝 Starting fresh deployment...[/yellow]")
+            
+            # Get app name
+            self.app_name = Prompt.ask(
+                "[bold blue]Enter a name for your app[/bold blue]\n"
+                "This will be used in the URL: {app-name}.{workspace-domain}",
+                default=f"{self.user_name}-ai-chatbot"
+            )
+            
+            # Get or create secret scope
+            success, scopes_output = self.run_databricks_command(["secrets", "list-scopes", "--output", "json"])
+            if not success:
+                self.console.print("[red]❌ Failed to list secret scopes[/red]")
+                return False
+                
+            try:
+                scopes_data = json.loads(scopes_output)
+                existing_scopes = []
+                if isinstance(scopes_data, dict) and "scopes" in scopes_data:
+                    existing_scopes = [scope["name"] for scope in scopes_data["scopes"]]
+                elif isinstance(scopes_data, list):
+                    existing_scopes = [scope["name"] for scope in scopes_data]
+            except Exception as e:
+                self.console.print(f"[red]❌ Failed to parse scopes: {e}[/red]")
+                return False
+            
+            if existing_scopes:
+                self.console.print("\n[bold blue]Found existing secret scopes:[/bold blue]")
+                for i, scope in enumerate(existing_scopes, 1):
+                    self.console.print(f"  {i}. {scope}")
+                
+                use_existing = Confirm.ask("\nWould you like to use an existing scope?", default=True)
+                if use_existing:
+                    scope_idx = Prompt.ask(
+                        "Enter the number of the scope to use",
+                        choices=[str(i) for i in range(1, len(existing_scopes) + 1)],
+                        default="1"
+                    )
+                    self.scope_name = existing_scopes[int(scope_idx) - 1]
+                else:
+                    self.scope_name = Prompt.ask(
+                        "[bold blue]Enter a name for the new secret scope[/bold blue]",
+                        default=f"{self.app_name}-scope"
+                    )
+                    success, output = self.run_databricks_command(["secrets", "create-scope", self.scope_name])
+                    if not success:
+                        self.console.print(f"[red]❌ Failed to create secret scope: {output}[/red]")
+                        return False
+                    self.console.print(f"[green]✅ Created new secret scope: {self.scope_name}[/green]")
+            else:
+                self.scope_name = f"{self.app_name}-scope"
+                success, output = self.run_databricks_command(["secrets", "create-scope", self.scope_name])
+                if not success:
+                    self.console.print(f"[red]❌ Failed to create secret scope: {output}[/red]")
+                    return False
+                self.console.print(f"[green]✅ Created new secret scope: {self.scope_name}[/green]")
+            
+            # Get or create secret
+            self.secret_name = Prompt.ask(
+                "[bold blue]Enter a name for the OpenAI API key secret[/bold blue]",
+                default="openai-api-key"
+            )
+            
+            # Check if secret exists
+            success, secrets_output = self.run_databricks_command([
+                "secrets", "list", self.scope_name,
+                "--output", "json"
+            ])
+            
+            existing_secrets = []
+            if success:
+                try:
+                    secrets_data = json.loads(secrets_output)
+                    if isinstance(secrets_data, dict) and "secrets" in secrets_data:
+                        existing_secrets = [secret["key"] for secret in secrets_data["secrets"]]
+                    elif isinstance(secrets_data, list):
+                        existing_secrets = [secret["key"] for secret in secrets_data]
+                except:
+                    pass
+                
+                if self.secret_name in existing_secrets:
+                    reuse_secret = Confirm.ask(
+                        f"\nSecret '{self.secret_name}' already exists in scope '{self.scope_name}'. Would you like to reuse it?",
+                        default=True
+                    )
+                    if not reuse_secret:
+                        self.secret_name = Prompt.ask(
+                            "[bold blue]Enter a different name for the OpenAI API key secret[/bold blue]",
+                            default=f"{self.secret_name}-new"
+                        )
+            
+            # Get OpenAI API key if creating new secret
+            if not success or self.secret_name not in existing_secrets:
+                openai_key = Prompt.ask(
+                    "[bold blue]Enter your OpenAI API key[/bold blue]\n"
+                    "This will be stored securely in your Databricks workspace",
+                    password=True
+                )
+                
+                # Create the secret
+                success, output = self.run_databricks_command([
+                    "secrets", "put", "--scope", self.scope_name,
+                    "--key", self.secret_name
+                ], input_data=openai_key)
+                
+                if not success:
+                    self.console.print(f"[red]❌ Failed to create secret: {output}[/red]")
+                    return False
+                
+                self.console.print(f"[green]✅ Created new secret: {self.secret_name}[/green]")
+            
+            # Create app.yaml
+            config = {
+                "workspace_url": self.workspace_url,
+                "app_name": self.app_name,
+                "secret_scope": self.scope_name,
+                "secret_key": self.secret_name
+            }
+            
+            with open("app.yaml", "w") as f:
+                yaml.dump(config, f)
+                
+            self.console.print("[green]✅ Created app.yaml with configuration[/green]")
+            
+            # Create fresh app
+            success, output = self.run_databricks_command([
+                "apps", "create", self.app_name,
+                "--no-wait"
+            ])
+            
+            if not success:
+                self.display_friendly_error(output, "Creating App")
+                return False
+                
+            self.console.print("[green]✅ Created new app successfully[/green]")
+            
+            # For fresh deploy, sync code and deploy
+            success, output = self.run_databricks_command([
+                "apps", "sync", self.app_name,
+                "--no-wait"
+            ])
+            
+            if not success:
+                self.display_friendly_error(output, "Syncing Code")
+                return False
+                
+            self.console.print("[green]✅ Code synced successfully[/green]")
+            
+            # Deploy the app
+            success, output = self.run_databricks_command([
+                "apps", "deploy", self.app_name,
+                "--no-wait"
+            ])
+            
+            if not success:
+                self.display_friendly_error(output, "Deploying App")
+                return False
+                
+            self.console.print("[green]✅ App deployed successfully[/green]")
+        else:
+            # For existing apps, show redeploy message and use redeploy
+            self.console.print(Panel(
+                "[bold blue]🔄 Quick Redeploy Mode[/bold blue]\n\n"
+                "This will:\n"
+                "  1. Load configuration from app.yaml\n"
+                "  2. Sync your code to the workspace\n"
+                "  3. Redeploy the existing app\n",
+                title="🚀 Quick Redeploy",
+                style="blue"
+            ))
+            
+            success = self.redeploy()
+            if not success:
+                return False
+        
+        # Start the app after deployment
+        return self.start_app()
+
 
 def main():
-    """Main entry point."""
-    parser = argparse.ArgumentParser(
-        description="🚀 Databricks AI Chatbot - Smart Deploy",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  python deploy.py                    # Normal deployment
-  python deploy.py --dry-run          # Preview deployment without changes
-  python deploy.py --interactive      # Interactive deployment with pauses
-  python deploy.py --redeploy         # Quick redeploy (sync code + deploy only)
-  python deploy.py --status           # Show current app status and details
-  python deploy.py -d -i              # Interactive dry run (recommended for demos)
-  python deploy.py -r                 # Quick redeploy (short form)
-  python deploy.py -s                 # Check status (short form)
-        """
-    )
-    
-    parser.add_argument(
-        "--dry-run", "-d",
-        action="store_true",
-        help="Show what would be done without making changes"
-    )
-    
-    parser.add_argument(
-        "--interactive", "-i",
-        action="store_true",
-        help="Pause after each step (can combine with --dry-run)"
-    )
-    
-    parser.add_argument(
-        "--redeploy", "-r",
-        action="store_true",
-        help="Quick redeploy: sync code and redeploy existing app (skips configuration)"
-    )
-    
-    parser.add_argument(
-        "--status", "-s",
-        action="store_true",
-        help="Show current app deployment status and details"
-    )
-    
+    """Main entry point for the deployment script."""
+    parser = argparse.ArgumentParser(description="Databricks App Deployment Tool")
+    parser.add_argument("command", choices=["deploy", "status", "stop", "start", "delete"],
+                      help="Command to execute", nargs="?")
+    parser.add_argument("--dry-run", "-d", action="store_true",
+                      help="Simulate the deployment without making changes")
+    parser.add_argument("--interactive", "-i", action="store_true",
+                      help="Run in interactive mode with step-by-step confirmation")
     args = parser.parse_args()
     
-    # Validate argument combinations
-    if args.dry_run and args.redeploy:
-        Console().print("[red]❌ Cannot use --dry-run with --redeploy[/red]")
-        sys.exit(1)
+    deployer = DatabricksDeployer()
     
-    if args.status and (args.dry_run or args.redeploy):
-        Console().print("[red]❌ Cannot use --status with other deployment options[/red]")
-        sys.exit(1)
+    # Set dry-run and interactive flags
+    deployer.dry_run = args.dry_run
+    deployer.interactive = args.interactive
     
-    try:
-        deployer = DatabricksDeployer(
-            dry_run=args.dry_run,
-            interactive=args.interactive
-        )
-        
-        if args.redeploy:
-            success = deployer.redeploy()
-        elif args.status:
-            success = deployer.show_status()
-        else:
-            success = deployer.run()
-            
-        sys.exit(0 if success else 1)
-        
-    except KeyboardInterrupt:
-        Console().print("\n[yellow]⏹️  Deployment cancelled by user[/yellow]")
-        sys.exit(1)
-    except Exception as e:
-        Console().print(f"\n[red]❌ Unexpected error: {e}[/red]")
-        sys.exit(1)
-
+    # If no command provided, show help and exit
+    if not args.command:
+        parser.print_help()
+        return
+    
+    # Map commands to methods
+    if args.command == "start":
+        deployer.start_app()
+    elif args.command == "stop":
+        deployer.stop_app()
+    elif args.command == "status":
+        deployer.show_status()
+    elif args.command == "delete":
+        deployer.delete_app()
+    elif args.command == "deploy":
+        # Use v1.0.0's robust deployment path
+        deployer.deploy()
 
 if __name__ == "__main__":
     main() 
