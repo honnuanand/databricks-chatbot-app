@@ -1,0 +1,13 @@
+command: ['streamlit', 'run', 'app.py', '--server.port=8501', '--server.address=0.0.0.0', '--server.headless=true']
+env:
+  - name: 'OPENAI_API_KEY'
+    value: '{{secrets/RAG-demo-scope/openai_api_key}}'
+
+permissions:
+  - group_name: 'users'
+    permission_level: 'CAN_USE'
+
+resources:
+  - name: 'default-sql-warehouse'
+    description: 'SQL Warehouse for app queries'
+    type: 'sql_warehouse'
