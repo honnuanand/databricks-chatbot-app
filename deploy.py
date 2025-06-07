@@ -1163,42 +1163,6 @@ resources:
             with open("app.yaml", "r") as f:
                 yaml_content = f.read()
                 
-            # Try to auto-detect app name by listing existing apps
-            success, apps_output = self.run_databricks_command(["apps", "list", "--output", "json"], timeout=30)
-            if success:
-                apps_data = self.extract_json_from_output(apps_output)
-                if apps_data and isinstance(apps_data, dict) and "apps" in apps_data:
-                    apps = apps_data["apps"]
-                    if len(apps) == 1:
-                        # If only one app exists, use it
-                        self.app_name = apps[0]["name"]
-                        self.console.print(f"[green]✅ Auto-detected app: {self.app_name}[/green]")
-                    elif len(apps) > 1:
-                        # Multiple apps, let user choose
-                        self.console.print("[yellow]Multiple apps found. Please select:[/yellow]")
-                        for i, app in enumerate(apps, 1):
-                            self.console.print(f"  {i}. {app['name']}")
-                        
-                        while True:
-                            try:
-                                choice = int(Prompt.ask("Select app number", default="1"))
-                                if 1 <= choice <= len(apps):
-                                    self.app_name = apps[choice-1]["name"]
-                                    break
-                                else:
-                                    self.console.print("[red]Invalid choice[/red]")
-                            except ValueError:
-                                self.console.print("[red]Please enter a number[/red]")
-                    else:
-                        self.console.print("[red]❌ No apps found. Run full deployment first.[/red]")
-                        return False
-                else:
-                    # Fallback to known app name
-                    self.app_name = "anand-rao-ai-chatbot"
-            else:
-                # Fallback to known app name
-                self.app_name = "anand-rao-ai-chatbot"
-            
             # Extract scope and secret from yaml
             import re
             secret_match = re.search(r'{{secrets/([^/]+)/([^}]+)}}', yaml_content)
@@ -1208,6 +1172,14 @@ resources:
             else:
                 self.console.print("[red]❌ Could not find secret configuration in app.yaml[/red]")
                 return False
+            
+            # Extract app name from yaml
+            app_config = yaml.safe_load(yaml_content)
+            if isinstance(app_config, dict) and "app_name" in app_config:
+                self.app_name = app_config["app_name"]
+            else:
+                # Fallback to default app name
+                self.app_name = "anand-rao-ai-chatbot"
                 
             # Set workspace path
             self.workspace_path = f"/Workspace/Users/{self.user_email}/{self.app_name}"
@@ -1867,215 +1839,98 @@ resources:
             return False
 
     def deploy(self) -> bool:
-        """Deploy the app (default action when no arguments provided)."""
+        """Deploy the app (fresh deployment only)."""
         self.console.print(Panel(
-            "[bold blue]📦 Deploy App[/bold blue]\n\n"
+            "[bold blue]📦 Fresh Deploy[/bold blue]\n\n"
             "This will:\n"
-            "  1. Package your app\n"
-            "  2. Deploy to Databricks\n"
-            "  3. Start the app\n",
-            title="📦 Deploy App",
+            "  1. Create a new app\n"
+            "  2. Configure secrets and scopes\n"
+            "  3. Deploy to Databricks\n"
+            "  4. Start the app\n",
+            title="📦 Fresh Deploy",
             style="blue"
         ))
         
-        # Check prerequisites - this will set up user_email, workspace_url etc.
+        # Check prerequisites
         if not self.check_prerequisites():
             return False
+            
+        # Get app name
+        self.app_name = Prompt.ask(
+            "[bold blue]Enter a name for your app[/bold blue]\n"
+            "This will be used in the URL: {app-name}.{workspace-domain}",
+            default=f"{self.user_name}-ai-chatbot"
+        )
         
-        # Check if app.yaml exists and try to load it
-        is_fresh_deploy = not os.path.exists("app.yaml")
-        if not is_fresh_deploy:
+        # Check if app already exists on Databricks
+        success, apps_output = self.run_databricks_command(["apps", "list", "--output", "json"])
+        if success:
             try:
-                with open("app.yaml", "r") as f:
-                    config = yaml.safe_load(f)
-                # Verify required fields
-                if not all(k in config for k in ["workspace_url", "app_name", "secret_scope", "secret_key"]):
-                    self.console.print("[yellow]⚠️ Existing app.yaml is incomplete. Starting fresh deployment...[/yellow]")
-                    is_fresh_deploy = True
-                else:
-                    self.workspace_url = config["workspace_url"]
-                    self.app_name = config["app_name"]
-                    self.scope_name = config["secret_scope"]
-                    self.secret_name = config["secret_key"]
-            except Exception as e:
-                self.console.print(f"[yellow]⚠️ Error reading app.yaml: {e}. Starting fresh deployment...[/yellow]")
-                is_fresh_deploy = True
-        
-        if is_fresh_deploy:
-            self.console.print("[yellow]📝 Starting fresh deployment...[/yellow]")
-            
-            # Get app name
-            self.app_name = Prompt.ask(
-                "[bold blue]Enter a name for your app[/bold blue]\n"
-                "This will be used in the URL: {app-name}.{workspace-domain}",
-                default=f"{self.user_name}-ai-chatbot"
-            )
-            
-            # Get or create secret scope
-            success, scopes_output = self.run_databricks_command(["secrets", "list-scopes", "--output", "json"])
-            if not success:
-                self.console.print("[red]❌ Failed to list secret scopes[/red]")
-                return False
-                
-            try:
-                scopes_data = json.loads(scopes_output)
-                existing_scopes = []
-                if isinstance(scopes_data, dict) and "scopes" in scopes_data:
-                    existing_scopes = [scope["name"] for scope in scopes_data["scopes"]]
-                elif isinstance(scopes_data, list):
-                    existing_scopes = [scope["name"] for scope in scopes_data]
-            except Exception as e:
-                self.console.print(f"[red]❌ Failed to parse scopes: {e}[/red]")
-                return False
-            
-            if existing_scopes:
-                self.console.print("\n[bold blue]Found existing secret scopes:[/bold blue]")
-                for i, scope in enumerate(existing_scopes, 1):
-                    self.console.print(f"  {i}. {scope}")
-                
-                use_existing = Confirm.ask("\nWould you like to use an existing scope?", default=True)
-                if use_existing:
-                    scope_idx = Prompt.ask(
-                        "Enter the number of the scope to use",
-                        choices=[str(i) for i in range(1, len(existing_scopes) + 1)],
-                        default="1"
-                    )
-                    self.scope_name = existing_scopes[int(scope_idx) - 1]
-                else:
-                    self.scope_name = Prompt.ask(
-                        "[bold blue]Enter a name for the new secret scope[/bold blue]",
-                        default=f"{self.app_name}-scope"
-                    )
-                    success, output = self.run_databricks_command(["secrets", "create-scope", self.scope_name])
-                    if not success:
-                        self.console.print(f"[red]❌ Failed to create secret scope: {output}[/red]")
+                apps_data = self.extract_json_from_output(apps_output)
+                if apps_data and isinstance(apps_data, dict) and "apps" in apps_data:
+                    existing_apps = [app["name"] for app in apps_data["apps"]]
+                    if self.app_name in existing_apps:
+                        self.console.print(f"[yellow]⚠️ App '{self.app_name}' already exists! Use 'redeploy' command to update existing app.[/yellow]")
                         return False
-                    self.console.print(f"[green]✅ Created new secret scope: {self.scope_name}[/green]")
-            else:
-                self.scope_name = f"{self.app_name}-scope"
-                success, output = self.run_databricks_command(["secrets", "create-scope", self.scope_name])
-                if not success:
-                    self.console.print(f"[red]❌ Failed to create secret scope: {output}[/red]")
-                    return False
-                self.console.print(f"[green]✅ Created new secret scope: {self.scope_name}[/green]")
-            
-            # Get or create secret
-            self.secret_name = Prompt.ask(
-                "[bold blue]Enter a name for the OpenAI API key secret[/bold blue]",
-                default="openai-api-key"
-            )
-            
-            # Check if secret exists
-            success, secrets_output = self.run_databricks_command([
-                "secrets", "list", self.scope_name,
-                "--output", "json"
-            ])
-            
-            existing_secrets = []
-            if success:
-                try:
-                    secrets_data = json.loads(secrets_output)
-                    if isinstance(secrets_data, dict) and "secrets" in secrets_data:
-                        existing_secrets = [secret["key"] for secret in secrets_data["secrets"]]
-                    elif isinstance(secrets_data, list):
-                        existing_secrets = [secret["key"] for secret in secrets_data]
-                except:
-                    pass
-                
-                if self.secret_name in existing_secrets:
-                    reuse_secret = Confirm.ask(
-                        f"\nSecret '{self.secret_name}' already exists in scope '{self.scope_name}'. Would you like to reuse it?",
-                        default=True
-                    )
-                    if not reuse_secret:
-                        self.secret_name = Prompt.ask(
-                            "[bold blue]Enter a different name for the OpenAI API key secret[/bold blue]",
-                            default=f"{self.secret_name}-new"
-                        )
-            
-            # Get OpenAI API key if creating new secret
-            if not success or self.secret_name not in existing_secrets:
-                openai_key = Prompt.ask(
-                    "[bold blue]Enter your OpenAI API key[/bold blue]\n"
-                    "This will be stored securely in your Databricks workspace",
-                    password=True
-                )
-                
-                # Create the secret
-                success, output = self.run_databricks_command([
-                    "secrets", "put", "--scope", self.scope_name,
-                    "--key", self.secret_name
-                ], input_data=openai_key)
-                
-                if not success:
-                    self.console.print(f"[red]❌ Failed to create secret: {output}[/red]")
-                    return False
-                
-                self.console.print(f"[green]✅ Created new secret: {self.secret_name}[/green]")
-            
-            # Create app.yaml
-            config = {
-                "workspace_url": self.workspace_url,
-                "app_name": self.app_name,
-                "secret_scope": self.scope_name,
-                "secret_key": self.secret_name
-            }
-            
-            with open("app.yaml", "w") as f:
-                yaml.dump(config, f)
-                
-            self.console.print("[green]✅ Created app.yaml with configuration[/green]")
-            
-            # Create fresh app
-            success, output = self.run_databricks_command([
-                "apps", "create", self.app_name,
-                "--no-wait"
-            ])
-            
-            if not success:
-                self.display_friendly_error(output, "Creating App")
+            except Exception as e:
+                self.console.print(f"[red]❌ Failed to check existing apps: {e}[/red]")
                 return False
-                
-            self.console.print("[green]✅ Created new app successfully[/green]")
+        
+        # Configure scope and secret
+        if not self.configure_scope():
+            return False
             
-            # For fresh deploy, sync code and deploy
-            success, output = self.run_databricks_command([
-                "apps", "sync", self.app_name,
-                "--no-wait"
-            ])
+        if not self.configure_secret():
+            return False
             
-            if not success:
-                self.display_friendly_error(output, "Syncing Code")
-                return False
-                
-            self.console.print("[green]✅ Code synced successfully[/green]")
+        # Create app.yaml
+        config = {
+            "workspace_url": self.workspace_url,
+            "app_name": self.app_name,
+            "secret_scope": self.scope_name,
+            "secret_key": self.secret_name
+        }
+        
+        with open("app.yaml", "w") as f:
+            yaml.dump(config, f)
             
-            # Deploy the app
-            success, output = self.run_databricks_command([
-                "apps", "deploy", self.app_name,
-                "--no-wait"
-            ])
+        self.console.print("[green]✅ Created app.yaml with configuration[/green]")
+        
+        # Create fresh app
+        success, output = self.run_databricks_command([
+            "apps", "create", self.app_name,
+            "--no-wait"
+        ])
+        
+        if not success:
+            self.display_friendly_error(output, "Creating App")
+            return False
             
-            if not success:
-                self.display_friendly_error(output, "Deploying App")
-                return False
-                
-            self.console.print("[green]✅ App deployed successfully[/green]")
-        else:
-            # For existing apps, show redeploy message and use redeploy
-            self.console.print(Panel(
-                "[bold blue]🔄 Quick Redeploy Mode[/bold blue]\n\n"
-                "This will:\n"
-                "  1. Load configuration from app.yaml\n"
-                "  2. Sync your code to the workspace\n"
-                "  3. Redeploy the existing app\n",
-                title="🚀 Quick Redeploy",
-                style="blue"
-            ))
+        self.console.print("[green]✅ Created new app successfully[/green]")
+        
+        # For fresh deploy, sync code and deploy
+        success, output = self.run_databricks_command([
+            "apps", "sync", self.app_name,
+            "--no-wait"
+        ])
+        
+        if not success:
+            self.display_friendly_error(output, "Syncing Code")
+            return False
             
-            success = self.redeploy()
-            if not success:
-                return False
+        self.console.print("[green]✅ Code synced successfully[/green]")
+        
+        # Deploy the app
+        success, output = self.run_databricks_command([
+            "apps", "deploy", self.app_name,
+            "--no-wait"
+        ])
+        
+        if not success:
+            self.display_friendly_error(output, "Deploying App")
+            return False
+            
+        self.console.print("[green]✅ App deployed successfully[/green]")
         
         # Start the app after deployment
         return self.start_app()
@@ -2084,7 +1939,7 @@ resources:
 def main():
     """Main entry point for the deployment script."""
     parser = argparse.ArgumentParser(description="Databricks App Deployment Tool")
-    parser.add_argument("command", choices=["deploy", "status", "stop", "start", "delete"],
+    parser.add_argument("command", choices=["deploy", "redeploy", "status", "stop", "start", "delete"],
                       help="Command to execute", nargs="?")
     parser.add_argument("--dry-run", "-d", action="store_true",
                       help="Simulate the deployment without making changes")
@@ -2113,8 +1968,11 @@ def main():
     elif args.command == "delete":
         deployer.delete_app()
     elif args.command == "deploy":
-        # Use v1.0.0's robust deployment path
+        # Fresh deployment only
         deployer.deploy()
+    elif args.command == "redeploy":
+        # Quick redeploy of existing app
+        deployer.redeploy()
 
 if __name__ == "__main__":
     main() 
